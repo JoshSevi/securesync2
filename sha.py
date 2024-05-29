@@ -1,6 +1,9 @@
 import time
 from pyfingerprint.pyfingerprint import PyFingerprint
-from firebase_config import db
+from firebase_config import get_database_reference
+
+db_ref = get_database_reference()
+
 
 def get_fingerprint_template(f):
     try:
@@ -39,6 +42,7 @@ def get_fingerprint_template(f):
         print('Exception message: ' + str(e))
         return None
 
+
 def enroll_user():
     try:
         f = PyFingerprint('/dev/ttyS0', 57600, 0xFFFFFFFF, 0x00000000)
@@ -50,28 +54,31 @@ def enroll_user():
         if template is None:
             return
 
-        ref = db.reference('users')
-        users = ref.get()
+        users_ref = db_ref.child('users')
+        users = users_ref.get()
 
-        for user_id, user_data in users.items():
-            stored_template = list(map(int, user_data['fingerprint_template'].strip('[]').split(', ')))
-            f.uploadCharacteristics(0x01, stored_template)
-            if f.compareCharacteristics() > 50:  # Similarity threshold
-                print(f'Fingerprint already enrolled for {user_data["name"]}.')
-                return
+        if users:
+            for user_id, user_data in users.items():
+                stored_template = user_data.get('fingerprint_template')
+                if stored_template:
+                    # Compare fingerprints
+                    if compare_fingerprints(template, stored_template):
+                        print(f'Fingerprint already enrolled for {user_data["name"]}.')
+                        return
 
         name = input('Enter name: ')
-        new_user_ref = ref.push()
-        new_user_ref.set({
+        new_user_data = {
             'name': name,
-            'fingerprint_template': str(template)
-        })
+            'fingerprint_template': template
+        }
+        users_ref.push(new_user_data)
 
         print(f'Fingerprint for {name} enrolled successfully.')
 
     except Exception as e:
         print('Failed to enroll user!')
         print('Exception message: ' + str(e))
+
 
 def verify_fingerprint():
     try:
@@ -89,40 +96,39 @@ def verify_fingerprint():
         # Converts read image to characteristics and stores it in charbuffer 1
         f.convertImage(0x01)
 
-        ref = db.reference('users')
-        users = ref.get()
+        users_ref = db_ref.child('users')
+        users = users_ref.get()
 
         matched_user = None
-        for user_id, user_data in users.items():
-            stored_template = list(map(int, user_data['fingerprint_template'].strip('[]').split(', ')))
-            f.uploadCharacteristics(0x02, stored_template)  # Compare with charbuffer 2
-            if f.compareCharacteristics() > 50:  # Similarity threshold
-                matched_user = (user_id, user_data['name'])
-                break
+        if users:
+            for user_id, user_data in users.items():
+                stored_template = user_data.get('fingerprint_template')
+                if stored_template:
+                    if compare_fingerprints(template, stored_template):
+                        matched_user = user_data
+                        break
 
         if matched_user:
-            user_id, user_name = matched_user
+            user_name = matched_user['name']
             current_date = time.strftime('%Y-%m-%d')
             current_time = time.strftime('%H:%M:%S')
 
-            attendance_ref = db.reference('attendance')
-            attendance_records = attendance_ref.order_by_child('user_id').equal_to(user_id).get()
+            attendance_ref = db_ref.child('attendance')
+            attendance_record = attendance_ref.order_by_child('user_id').equal_to(user_id).get()
 
-            time_out_recorded = False
-            for record_id, record_data in attendance_records.items():
-                if record_data['date'] == current_date and 'time_out' not in record_data:
+            for record_id, record_data in attendance_record.items():
+                if record_data['date'] == current_date and not record_data['time_out']:
                     attendance_ref.child(record_id).update({'time_out': current_time})
                     print(f'Time-out recorded for {user_name} at {current_time}.')
-                    time_out_recorded = True
-                    break
+                    return
 
-            if not time_out_recorded:
-                attendance_ref.push({
-                    'user_id': user_id,
-                    'date': current_date,
-                    'time_in': current_time
-                })
-                print(f'Time-in recorded for {user_name} at {current_time}.')
+            new_attendance_data = {
+                'user_id': user_id,
+                'date': current_date,
+                'time_in': current_time
+            }
+            attendance_ref.push(new_attendance_data)
+            print(f'Time-in recorded for {user_name} at {current_time}.')
 
         else:
             print('Unrecognized fingerprint.')
@@ -130,6 +136,12 @@ def verify_fingerprint():
     except Exception as e:
         print('Failed to verify fingerprint!')
         print('Exception message: ' + str(e))
+
+
+def compare_fingerprints(template1, template2):
+    # Your fingerprint comparison logic here
+    pass
+
 
 def update_fingerprint():
     name = input("Enter name to update fingerprint: ")
@@ -143,18 +155,14 @@ def update_fingerprint():
         if template is None:
             return
 
-        ref = db.reference('users')
-        users = ref.get()
+        users_ref = db_ref.child('users')
+        users = users_ref.order_by_child('name').equal_to(name).get()
 
-        user_id_to_update = None
-        for user_id, user_data in users.items():
-            if user_data['name'] == name:
-                user_id_to_update = user_id
-                break
-
-        if user_id_to_update:
-            ref.child(user_id_to_update).update({'fingerprint_template': str(template)})
-            print(f'Fingerprint for {name} updated successfully.')
+        if users:
+            for user_id, user_data in users.items():
+                users_ref.child(user_id).update({'fingerprint_template': template})
+                print(f'Fingerprint for {name} updated successfully.')
+                return
         else:
             print('Name not found.')
 
@@ -162,21 +170,18 @@ def update_fingerprint():
         print('Failed to update fingerprint!')
         print('Exception message: ' + str(e))
 
+
 def delete_fingerprint():
     name = input("Enter name to delete fingerprint: ")
     try:
-        ref = db.reference('users')
-        users = ref.get()
+        users_ref = db_ref.child('users')
+        users = users_ref.order_by_child('name').equal_to(name).get()
 
-        user_id_to_delete = None
-        for user_id, user_data in users.items():
-            if user_data['name'] == name:
-                user_id_to_delete = user_id
-                break
-
-        if user_id_to_delete:
-            ref.child(user_id_to_delete).delete()
-            print(f'Fingerprint for {name} deleted successfully.')
+        if users:
+            for user_id, user_data in users.items():
+                users_ref.child(user_id).delete()
+                print(f'Fingerprint for {name} deleted successfully.')
+                return
         else:
             print('Name not found.')
 
@@ -184,21 +189,23 @@ def delete_fingerprint():
         print('Failed to delete fingerprint!')
         print('Exception message: ' + str(e))
 
+
 def view_fingerprints():
     try:
-        ref = db.reference('users')
-        users = ref.get()
+        users_ref = db_ref.child('users')
+        users = users_ref.get()
 
-        if not users:
-            print('No fingerprints enrolled.')
-        else:
+        if users:
             print('Enrolled fingerprints:')
-            for user_data in users.values():
+            for user_id, user_data in users.items():
                 print(user_data['name'])
+        else:
+            print('No fingerprints enrolled.')
 
     except Exception as e:
         print('Failed to fetch fingerprints!')
         print('Exception message: ' + str(e))
+
 
 def main():
     while True:
@@ -225,6 +232,7 @@ def main():
             break
         else:
             print("Invalid choice. Please try again.")
+
 
 if __name__ == "__main__":
     main()
