@@ -4,6 +4,18 @@ from firebase_config import get_database_reference
 db_ref = get_database_reference()
 
 
+import time
+import firebase_admin
+from firebase_admin import credentials
+from firebase_admin import db
+
+# Initialize Firebase Admin SDK
+cred = credentials.Certificate("path/to/serviceAccountKey.json") # Update with your own service account key
+firebase_admin.initialize_app(cred)
+
+# Get a reference to the Firebase Realtime Database
+db_ref = db.reference()
+
 def store_data(data):
     timestamp = int(time.time() * 1000) # Convert current time to milliseconds
     data_to_store = {
