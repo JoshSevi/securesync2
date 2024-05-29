@@ -1,13 +1,6 @@
 import time
 from pyfingerprint.pyfingerprint import PyFingerprint
-import firebase_admin
-from firebase_admin import credentials, db
-
-# Initialize Firebase
-cred = credentials.Certificate('path/to/serviceAccountKey.json')
-firebase_admin.initialize_app(cred, {
-    'databaseURL': 'https://sync-24-default-rtdb.asia-southeast1.firebasedatabase.app'
-})
+from firebase_config import db
 
 def get_fingerprint_template(f):
     try:
